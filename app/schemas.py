@@ -14,3 +14,8 @@ class Post(BaseModel):
     name:str
     content:str
     published:Optional[bool] = True
+    
+class TokenData(BaseModel):
+    id: Optional[int]
+    email:EmailStr
+    

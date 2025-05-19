@@ -1,12 +1,13 @@
-from fastapi import FastAPI, HTTPException, status, APIRouter
+from fastapi import FastAPI, HTTPException, status, APIRouter, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 from passlib.context import CryptContext
 from psycopg2 import connect, errors
 from psycopg2.extras import RealDictCursor
-from app.schemas import UserCreate, UserOut, Post
+from app.schemas import UserCreate, UserOut, Post, TokenData
 from app.database_connection import get_db_connection
 from app.util import password_encrypt, password_verify
+from app.OAuth2 import get_current_user
 
 router = APIRouter()
 
@@ -18,7 +19,7 @@ else:
 
 #create request -
 @router.post("/posts")
-async def create_post(post: Post):
+async def create_post(post: Post, user_detail : TokenData = Depends(get_current_user)):
     
     cursor.execute("INSERT INTO posts (name, content, published) VALUES (%s, %s, %s) RETURNING *", (post.name, post.content, post.published))
     post = cursor.fetchone()

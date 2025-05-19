@@ -1,2 +1,4 @@
 fastapi[standard]
 psycopg2 #python-postgree connection.
+pyjwt #token authentication
+passlib[bcrypt] #password hashing
