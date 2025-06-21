@@ -19,5 +19,5 @@ class user_message(BaseModel):
     user_message : str
     
 class TokenData(BaseModel):
-    id : Optional[int]
+    id : int
     email : EmailStr

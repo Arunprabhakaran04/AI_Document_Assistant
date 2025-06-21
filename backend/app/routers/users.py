@@ -4,9 +4,9 @@ from typing import Optional
 from passlib.context import CryptContext
 from psycopg2 import connect, errors
 from psycopg2.extras import RealDictCursor
-from app.schemas import UserCreate, UserOut, Post
-from app.database_connection import get_db_connection
-from app.util import password_encrypt, password_verify
+from ...schemas import usercreate, userout, Post
+from ...database_connection import get_db_connection
+from ...util import encrypt, verify
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from ...oauth2 import create_access_token, verify_access_token
 
@@ -22,9 +22,9 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-@router.post("/register", status_code = status.HTTP_201_CREATED, response_model = UserOut)
-async def create_user(user : UserCreate):
-    password = password_encrypt(user.password)
+@router.post("/register", status_code = status.HTTP_201_CREATED, response_model = userout)
+async def create_user(user : usercreate):
+    password = encrypt(user.password)
     user.password = password
     cursor.execute("INSERT INTO users (email, password) VALUES (%s, %s) RETURNING *", (user.email, user.password))
     new_user = cursor.fetchone()
@@ -37,7 +37,7 @@ async def login_user(userdata : UserLogin):
     user = cursor.fetchone()
     if user is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not found")
-    if not password_verify(userdata.password, user["password"]):
+    if not verify(userdata.password, user["password"]):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail = "password incorrect")
     else:
         access_token = create_access_token(data = {"user_id" : user["id"], "email" : user["email"]})
