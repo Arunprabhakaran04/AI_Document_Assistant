@@ -4,3 +4,5 @@ __pycache__/
 frontend/temp.py
 backend/uploads/
 backend/vector_stores
+debug_database.py
+test_connection_pool.py

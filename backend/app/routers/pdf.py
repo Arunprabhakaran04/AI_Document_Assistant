@@ -40,12 +40,8 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
             
         print(f"Vector store saved to: {vector_store_path}")
 
-        conn = get_db_connection()
-        if conn:
-            try:
-                save_vector_store_path(conn, user_id, vector_store_path)
-            finally:
-                conn.close()
+        with get_db_connection() as conn:
+            save_vector_store_path(conn, user_id, vector_store_path)
 
         return {"message": "PDF uploaded and embedded successfully."}
 

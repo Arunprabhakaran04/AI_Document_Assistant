@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
+from datetime import datetime
 
 class usercreate(BaseModel):
     email: EmailStr
@@ -7,7 +8,7 @@ class usercreate(BaseModel):
     
 class userout(BaseModel):
     id : int
-    created_at : str
+    created_at : datetime
     
 class Post(BaseModel):
     id:Optional[int] = 1
