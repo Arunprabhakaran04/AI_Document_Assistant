@@ -32,11 +32,17 @@ def register():
         if not email or not password:
             st.error("Please fill in all fields")
             return
-            
+                    
         try:
             res = requests.post(f"{API_URL}/register", json={"email": email, "password": password})
             if res.status_code == 201:
                 st.success("Account created successfully! Please login.")
+            elif res.status_code == 400:
+                error_detail = res.json().get('detail', '')
+                if "already exists" in error_detail.lower():
+                    st.error("An account with this email already exists. Please use a different email or log in.")
+                else:
+                    st.error(f"Registration failed: {error_detail}")
             else:
                 st.error(f"Registration failed: {res.json().get('detail', 'Unknown error')}")
         except requests.RequestException:
@@ -89,18 +95,54 @@ def load_chat_titles():
         res = requests.get(f"{API_URL}/list_chats", headers=headers)
         if res.status_code == 200:
             st.session_state.chat_titles = res.json().get("chats", [])
-    except requests.RequestException:
-        st.error("Failed to load chat history")
+        else:
+            print(f"Failed to load chats: {res.status_code}")
+    except requests.RequestException as e:
+        print(f"Error loading chat titles: {e}")
 
 def load_chat_messages(chat_id):
     headers = {"Authorization": f"Bearer {st.session_state.auth_token}"}
     try:
         res = requests.get(f"{API_URL}/chat_history/{chat_id}", headers=headers)
         if res.status_code == 200:
+            messages_data = res.json().get("messages", [])
+            # Convert database format to UI format
+            formatted_messages = []
+            for msg in messages_data:
+                formatted_msg = {
+                    "role": msg["role"],
+                    "content": msg["content"]
+                }
+                # Add source info for assistant messages
+                if msg["role"] == "assistant" and msg.get("source"):
+                    if msg["source"] == "rag":
+                        formatted_msg["content"] += "\n\n*Answer based on your uploaded document*"
+                    elif msg["source"] == "general":
+                        formatted_msg["content"] += "\n\n*General AI response*"
+                formatted_messages.append(formatted_msg)
+            
             st.session_state.chat_id = chat_id
-            st.session_state.messages = res.json().get("messages", [])
+            st.session_state.messages = formatted_messages
         else:
             st.error("Failed to load chat history")
+    except requests.RequestException:
+        st.error("Unable to connect to server")
+
+def delete_chat(chat_id):
+    headers = {"Authorization": f"Bearer {st.session_state.auth_token}"}
+    try:
+        res = requests.delete(f"{API_URL}/chat/{chat_id}", headers=headers)
+        if res.status_code == 200:
+            # Reload chat list
+            load_chat_titles()
+            # Clear current chat if it was deleted
+            if st.session_state.chat_id == chat_id:
+                st.session_state.chat_id = None
+                st.session_state.messages = []
+            st.success("Chat deleted successfully!")
+            st.rerun()
+        else:
+            st.error("Failed to delete chat")
     except requests.RequestException:
         st.error("Unable to connect to server")
 
@@ -156,12 +198,22 @@ def sidebar_controls():
     # Previous Chats
     if st.session_state.chat_titles:
         st.sidebar.write("Previous Chats:")
-        chat_dict = {chat["title"]: chat["chat_id"] for chat in st.session_state.chat_titles}
-        selected_title = st.sidebar.selectbox("Select chat", options=list(chat_dict.keys()))
         
-        if st.sidebar.button("Load Chat"):
-            load_chat_messages(chat_dict[selected_title])
-            st.rerun()
+        for chat in st.session_state.chat_titles:
+            chat_title = chat["title"]
+            chat_id = chat["chat_id"]
+            
+            # Create columns for chat title and delete button
+            col1, col2 = st.sidebar.columns([3, 1])
+            
+            with col1:
+                if st.button(chat_title, key=f"load_{chat_id}", help=f"Created: {chat.get('created_at', 'Unknown')}"):
+                    load_chat_messages(chat_id)
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️", key=f"del_{chat_id}", help="Delete chat"):
+                    delete_chat(chat_id)
     
     # Clear PDF option
     if st.session_state.has_pdf:
@@ -176,24 +228,37 @@ def sidebar_controls():
 def chat_ui():
     st.title("Chat Assistant")
     
+    # Current chat info
+    if st.session_state.chat_id:
+        st.write(f"**Chat ID:** `{st.session_state.chat_id[:8]}...`")
+    
     # PDF Status
     if st.session_state.has_pdf:
-        st.info(f"PDF Active: {st.session_state.pdf_filename}")
+        st.info(f"📄 PDF Active: {st.session_state.pdf_filename}")
     else:
-        st.warning("No PDF uploaded - Using general AI")
+        st.warning("⚠️ No PDF uploaded - Using general AI")
     
-    # Chat messages
-    for msg in st.session_state.messages:
-        if msg["role"] == "user":
-            st.write(f"**You:** {msg['content']}")
-        else:
-            st.write(f"**Assistant:** {msg['content']}")
+    # Chat messages container
+    chat_container = st.container()
+    
+    with chat_container:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                with st.chat_message("user"):
+                    st.write(msg['content'])
+            else:
+                with st.chat_message("assistant"):
+                    st.write(msg['content'])
     
     # Chat input
     user_input = st.chat_input("Ask me anything...")
     
     if user_input:
-        # Add user message
+        # Ensure we have a chat_id
+        if not st.session_state.chat_id:
+            st.session_state.chat_id = str(uuid.uuid4())
+        
+        # Add user message to UI immediately
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         # Prepare API request
@@ -224,18 +289,21 @@ def chat_ui():
                         reply += "\n\n*General AI response*"
                     
                     st.session_state.messages.append({"role": "assistant", "content": reply})
+                    
+                    # Reload chat titles to show the new/updated chat
+                    load_chat_titles()
                 else:
-                    error_msg = "Something went wrong. Please try again."
+                    error_msg = f"Error: {response.status_code} - {response.json().get('detail', 'Something went wrong')}"
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
                     
-            except requests.RequestException:
-                error_msg = "Unable to connect to server. Please check your connection."
+            except requests.RequestException as e:
+                error_msg = f"Unable to connect to server: {str(e)}"
                 st.session_state.messages.append({"role": "assistant", "content": error_msg})
         
         st.rerun()
 
 def main():
-    st.set_page_config(page_title="AI Document Assistant", page_icon="🤖")
+    st.set_page_config(page_title="AI Document Assistant", page_icon="🤖", layout="wide")
     
     # Initialize session state
     initialize_session_state()
