@@ -3,6 +3,8 @@ from fastapi.security import OAuth2PasswordBearer
 from ...oauth2 import get_current_user
 from ..utils.file_utils import save_pdf_file
 from ...tasks import process_pdf_task
+from ..services.task_service import TaskService
+from ...schemas import UserTasksResponse
 import os
 import shutil
 
@@ -26,6 +28,9 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         # Queue the task with Celery
         task = process_pdf_task.delay(user_id, file_path, file.filename)
         
+        # Store task in database for tracking
+        TaskService.store_user_task(user_id, task.id, "pdf_processing", file.filename)
+        
         return {
             "message": "PDF uploaded successfully and queued for processing",
             "task_id": task.id,
@@ -39,49 +44,46 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
 @router.get("/task_status/{task_id}")
 async def get_task_status(task_id: str, token: str = Depends(oauth2_scheme)):
     """Get the status of a specific task"""
-    from ...celery_app import celery_app
-    
-    task = celery_app.AsyncResult(task_id)
-    
-    if task.state == 'PENDING':
-        response = {
-            'state': task.state,
-            'status': 'queued',
-            'message': 'Task is waiting to be processed'
-        }
-    elif task.state == 'PROCESSING':
-        response = {
-            'state': task.state,
-            'status': 'processing',
-            'message': task.info.get('message', 'Processing...')
-        }
-    elif task.state == 'SUCCESS':
-        response = {
-            'state': task.state,
-            'status': 'completed',
-            'message': task.result.get('message', 'Completed'),
-            'result': task.result
-        }
-    else:  # FAILURE
-        response = {
-            'state': task.state,
-            'status': 'failed',
-            'message': str(task.info)
-        }
-    
-    return response
-
-@router.get("/processing_status")
-async def get_user_processing_status(token: str = Depends(oauth2_scheme)):
-    """Get all active tasks for the current user - simplified version"""
     user_data = get_current_user(token)
     
-    # This is a simplified version. In production, you'd want to store
-    # user-task relationships in your database for better tracking
+    task_info = TaskService.get_task_with_celery_status(task_id)
+    
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # Verify task belongs to the user
+    if task_info['user_id'] != user_data.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
     return {
-        "message": "Use the task_id returned from upload_pdf to check specific task status",
-        "user_id": user_data.id
+        'task_id': task_info['task_id'],
+        'task_type': task_info['task_type'],
+        'status': task_info['status'],
+        'filename': task_info['filename'],
+        'message': task_info['progress_message'],
+        'created_at': task_info['created_at'],
+        'updated_at': task_info['updated_at']
     }
+
+@router.get("/processing_status", response_model=UserTasksResponse)
+async def get_user_processing_status(token: str = Depends(oauth2_scheme)):
+    """Get all tasks for the current user - Production version"""
+    user_data = get_current_user(token)
+    
+    try:
+        # Get comprehensive task summary
+        tasks_summary = TaskService.get_user_tasks_summary(user_data.id)
+        
+        return UserTasksResponse(
+            user_id=tasks_summary['user_id'],
+            active_tasks=tasks_summary['active_tasks'],
+            completed_tasks=tasks_summary['completed_tasks'],
+            total_active=tasks_summary['total_active'],
+            total_completed=tasks_summary['total_completed']
+        )
+    except Exception as e:
+        print(f"Error getting user processing status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to fetch task status")
 
 def cleanup_existing_vectorstore(user_id: int):
     try:
@@ -93,6 +95,21 @@ def cleanup_existing_vectorstore(user_id: int):
             print(f"Cleaned up existing vector store for user {user_id}")
     except Exception as e:
         print(f"Warning: Could not clean up existing vector store: {e}")
+
+@router.post("/cleanup_old_tasks")
+async def cleanup_old_tasks(token: str = Depends(oauth2_scheme)):
+    """Clean up old completed/failed tasks (for maintenance)"""
+    user_data = get_current_user(token)
+    
+    try:
+        deleted_count = TaskService.cleanup_old_tasks(days_old=30)
+        return {
+            "message": f"Cleaned up {deleted_count} old tasks",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        print(f"Error cleaning up old tasks: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to cleanup old tasks")
 
 @router.post("/logout")
 async def logout(token: str = Depends(oauth2_scheme)):
