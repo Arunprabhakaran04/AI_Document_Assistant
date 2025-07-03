@@ -6,6 +6,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 
+# Global cache for embeddings model
+_embeddings_model = None
+
 class DocumentProcessor:
     def __init__(self, groq_api_key=None):
         self.api_key = groq_api_key or os.environ.get("GROQ_API_KEY")
@@ -19,11 +22,15 @@ class DocumentProcessor:
         os.makedirs(self.vector_store_dir, exist_ok=True)
 
     def _initialize_embeddings(self):
-        return HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-en-v1.5",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True}
-        )
+        global _embeddings_model
+        if _embeddings_model is None:
+            print("Initializing embeddings model...")
+            _embeddings_model = HuggingFaceEmbeddings(
+                model_name="BAAI/bge-small-en-v1.5",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True}
+            )
+        return _embeddings_model
 
     def _initialize_llm(self):
         return ChatGroq(
@@ -60,5 +67,8 @@ class DocumentProcessor:
         """Process PDF and return FAISS vector store"""
         raw_text = self.process_pdf(pdf_path)
         chunks = self.split_text(raw_text)
-        vector_store = FAISS.from_texts(chunks, self.embeddings)
-        return vector_store
+        return self.create_vector_store(chunks)
+
+    def create_vector_store(self, chunks):
+        """Create vector store from existing text chunks"""
+        return FAISS.from_texts(chunks, self.embeddings)
