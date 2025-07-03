@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 class usercreate(BaseModel):
@@ -22,3 +22,19 @@ class user_message(BaseModel):
 class TokenData(BaseModel):
     id : int
     email : EmailStr
+
+class UserTaskStatus(BaseModel):
+    task_id: str
+    task_type: str
+    status: str
+    filename: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    progress_message: Optional[str] = None
+
+class UserTasksResponse(BaseModel):
+    user_id: int
+    active_tasks: List[UserTaskStatus]
+    completed_tasks: List[UserTaskStatus]
+    total_active: int
+    total_completed: int
