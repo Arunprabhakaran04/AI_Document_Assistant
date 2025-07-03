@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import uuid
 from datetime import datetime
+import time
 
 API_URL = "http://127.0.0.1:8000"
 
@@ -174,16 +175,46 @@ def sidebar_controls():
             headers = {"Authorization": f"Bearer {st.session_state.auth_token}"}
             res = requests.post(f"{API_URL}/upload_pdf", files=files, headers=headers)
             
-            if res.status_code == 201:
-                st.session_state.has_pdf = True
-                st.session_state.pdf_filename = uploaded_file.name
-                st.session_state.upload_timestamp = datetime.now().isoformat()
-                st.sidebar.success("PDF uploaded successfully!")
-                st.rerun()
+            if res.status_code == 202:  # Changed from 201 to 202 for async processing
+                task_data = res.json()
+                task_id = task_data.get('task_id')
+                
+                # Show processing status
+                status_placeholder = st.sidebar.empty()
+                status_placeholder.info("Processing PDF... This may take a few minutes for large files.")
+                
+                # Poll for task status
+                max_retries = 180  # 3 minutes timeout
+                for attempt in range(max_retries):
+                    status_res = requests.get(
+                        f"{API_URL}/task_status/{task_id}",
+                        headers=headers
+                    )
+                    
+                    if status_res.status_code == 200:
+                        status_data = status_res.json()
+                        
+                        if status_data['status'] == 'completed':
+                            st.session_state.has_pdf = True
+                            st.session_state.pdf_filename = uploaded_file.name
+                            st.session_state.upload_timestamp = datetime.now().isoformat()
+                            status_placeholder.success("PDF processed successfully!")
+                            st.rerun()
+                            break
+                        elif status_data['status'] == 'failed':
+                            error_msg = status_data.get('message', 'Unknown error')
+                            status_placeholder.error(f"Processing failed: {error_msg}")
+                            break
+                        else:
+                            progress_msg = status_data.get('message', 'Processing...')
+                            status_placeholder.info(f"Processing PDF ({attempt+1}/{max_retries} seconds)... {progress_msg}")
+                            time.sleep(1)
+                else:
+                    status_placeholder.error("Processing timed out. The PDF might be too large or the server is busy. Please try again.")
             else:
                 st.sidebar.error(f"Upload failed: {res.json().get('detail', 'Unknown error')}")
-        except requests.RequestException:
-            st.sidebar.error("Unable to connect to server")
+        except requests.RequestException as e:
+            st.sidebar.error(f"Unable to connect to server: {str(e)}")
 
     st.sidebar.markdown("---")
     

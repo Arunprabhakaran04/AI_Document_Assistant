@@ -1,8 +1,17 @@
 from fastapi import FastAPI
-from backend.app.routers import users, chat, pdf
+from backend.app.routers import users, chat, pdf_celery as pdf
 from backend.database_connection import get_connection_pool, close_connection_pool
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def startup_event():
