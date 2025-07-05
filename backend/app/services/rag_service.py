@@ -5,6 +5,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+from loguru import logger
 
 # Global cache for embeddings model
 _embeddings_model = None
@@ -24,12 +25,16 @@ class DocumentProcessor:
     def _initialize_embeddings(self):
         global _embeddings_model
         if _embeddings_model is None:
-            print("Initializing embeddings model...")
+            logger.info("🤖 Initializing embeddings model for the first time - this may take a few minutes...")
+            logger.info("📥 Downloading/loading BAAI/bge-small-en-v1.5 model...")
             _embeddings_model = HuggingFaceEmbeddings(
                 model_name="BAAI/bge-small-en-v1.5",
                 model_kwargs={"device": "cpu"},
                 encode_kwargs={"normalize_embeddings": True}
             )
+            logger.success("✅ Embeddings model loaded successfully - subsequent uploads will be faster!")
+        else:
+            logger.info("⚡ Using cached embeddings model - fast loading!")
         return _embeddings_model
 
     def _initialize_llm(self):

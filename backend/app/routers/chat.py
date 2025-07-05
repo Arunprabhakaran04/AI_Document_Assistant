@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import Optional
+import os
+from loguru import logger
 
 from ...oauth2 import get_current_user
 from ...schemas import TokenData
-from ..services.rag_handler import load_vectorstore_for_user, get_user_query_response, get_general_llm_response, clear_user_cache
+from ..services.rag_handler import load_vectorstore_for_user, get_user_query_response, get_general_llm_response, clear_user_cache, get_cache_info
 from ..services.chat_db_service import ChatDBService
+from ..services.rag_service import DocumentProcessor
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -21,8 +24,8 @@ class ChatTitleUpdate(BaseModel):
 
 @router.post("/chat")
 async def chat_with_rag(request: Request, data: ChatRequest, current_user: TokenData = Depends(get_current_user)):
-    print(f"Received request data: {data}")
-    print(f"Current user: {current_user.email}")
+    logger.info(f"💬 Chat request from user {current_user.email}")
+    logger.debug(f"📝 Request data: {data}")
     
     try:
         # Create or get chat record
@@ -35,14 +38,18 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
         
         # Get AI response
         if not data.has_pdf:
+            logger.info("🤖 Using general LLM response")
             response = get_general_llm_response(data.query)
             source = "general"
         else:
+            logger.info("📄 Attempting to use PDF context")
             vectorstore = load_vectorstore_for_user(current_user.id)
             if vectorstore is None:
+                logger.warning("⚠️ No vector store found, falling back to general LLM")
                 response = get_general_llm_response(data.query)
                 source = "general"
             else:
+                logger.success("📄 Using PDF context for response")
                 response = get_user_query_response(vectorstore, data.query)
                 source = "rag"
         
@@ -54,10 +61,11 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
         if data.chat_id:
             ChatDBService.save_message(data.chat_id, "assistant", response, source)
         
+        logger.success(f"✅ Chat response sent (source: {source})")
         return {"response": response, "source": source}
             
     except Exception as e:
-        print(f"Error in chat: {str(e)}")
+        logger.error(f"❌ Error in chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 @router.get("/list_chats")
@@ -104,3 +112,36 @@ async def update_chat_title(chat_id: str, data: ChatTitleUpdate, current_user: T
 async def clear_cache(current_user: TokenData = Depends(get_current_user)):
     clear_user_cache(current_user.id)
     return {"message": "Cache cleared"}
+
+@router.get("/cache_status")
+async def get_cache_status(current_user: TokenData = Depends(get_current_user)):
+    """Get cache status for debugging"""
+    cache_info = get_cache_info()
+    return {
+        "user_id": current_user.id,
+        "user_has_cache": current_user.id in cache_info["cached_users"],
+        "cache_info": cache_info
+    }
+
+@router.post("/clear_pdf")
+async def clear_pdf(current_user: TokenData = Depends(get_current_user)):
+    """Clear PDF data for the current user"""
+    try:
+        logger.info(f"🗑️ Clearing PDF data for user {current_user.id}")
+        
+        # Clear the in-memory cache
+        clear_user_cache(current_user.id)
+        
+        # Clean up vector store files
+        processor = DocumentProcessor()
+        user_vector_dir = os.path.join(processor.vector_store_dir, f"user_{current_user.id}")
+        if os.path.exists(user_vector_dir):
+            import shutil
+            shutil.rmtree(user_vector_dir)
+            logger.info(f"🗑️ Cleaned up vector store for user {current_user.id}")
+        
+        logger.success(f"✅ PDF data cleared successfully for user {current_user.id}")
+        return {"message": "PDF data cleared successfully"}
+    except Exception as e:
+        logger.error(f"❌ Error clearing PDF data: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error clearing PDF data")

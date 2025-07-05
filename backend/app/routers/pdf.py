@@ -5,6 +5,8 @@ from ..utils.file_utils import save_pdf_file
 from ..services.rag_service import DocumentProcessor
 from ...database_connection import get_db_connection
 from ...vector_store_db import save_vector_store_path
+from ..services.rag_handler import clear_user_cache
+from loguru import logger
 import os
 import shutil
 
@@ -23,11 +25,11 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         cleanup_existing_vectorstore(user_id)
         
         file_path = save_pdf_file(file, user_id)
-        print(f"PDF saved to: {file_path}")
+        logger.info(f"📁 PDF saved to: {file_path}")
 
         processor = DocumentProcessor()
         vector_store = processor.embed_pdf(file_path, file.filename)
-        print(f"Vector store created with {vector_store.index.ntotal} vectors")
+        logger.success(f"🔢 Vector store created with {vector_store.index.ntotal} vectors")
 
         vector_store_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
         os.makedirs(vector_store_dir, exist_ok=True)
@@ -38,7 +40,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         if not os.path.exists(os.path.join(vector_store_path, "index.faiss")):
             raise Exception("Vector store files not created properly")
             
-        print(f"Vector store saved to: {vector_store_path}")
+        logger.success(f"💾 Vector store saved to: {vector_store_path}")
 
         with get_db_connection() as conn:
             save_vector_store_path(conn, user_id, vector_store_path)
@@ -46,7 +48,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         return {"message": "PDF uploaded and embedded successfully."}
 
     except Exception as e:
-        print(f"Error in upload_pdf: {str(e)}")
+        logger.error(f"❌ Error in upload_pdf: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -56,9 +58,12 @@ def cleanup_existing_vectorstore(user_id: int):
         user_vector_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
         if os.path.exists(user_vector_dir):
             shutil.rmtree(user_vector_dir)
-            print(f"Cleaned up existing vector store for user {user_id}")
+            logger.info(f"🗑️ Cleaned up existing vector store for user {user_id}")
     except Exception as e:
-        print(f"Warning: Could not clean up existing vector store: {e}")
+        logger.warning(f"⚠️ Could not clean up existing vector store: {e}")
+    
+    # Clear the in-memory cache for this user
+    clear_user_cache(user_id)
 
 
 @router.post("/logout")

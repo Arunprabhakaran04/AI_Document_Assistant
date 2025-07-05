@@ -250,10 +250,20 @@ def sidebar_controls():
     if st.session_state.has_pdf:
         st.sidebar.markdown("---")
         if st.sidebar.button("Clear PDF"):
-            st.session_state.has_pdf = False
-            st.session_state.pdf_filename = None
-            st.session_state.upload_timestamp = None
-            st.sidebar.success("PDF cleared from session")
+            try:
+                # Call backend to clear PDF data
+                headers = {"Authorization": f"Bearer {st.session_state.auth_token}"}
+                response = requests.post(f"{API_URL}/clear_pdf", headers=headers)
+                
+                if response.status_code == 200:
+                    st.session_state.has_pdf = False
+                    st.session_state.pdf_filename = None
+                    st.session_state.upload_timestamp = None
+                    st.sidebar.success("PDF cleared successfully")
+                else:
+                    st.sidebar.error("Failed to clear PDF from backend")
+            except requests.RequestException as e:
+                st.sidebar.error(f"Error clearing PDF: {str(e)}")
             st.rerun()
 
 def chat_ui():

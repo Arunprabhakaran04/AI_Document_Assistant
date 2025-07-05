@@ -5,6 +5,8 @@ from ..utils.file_utils import save_pdf_file
 from ...tasks import process_pdf_task
 from ..services.task_service import TaskService
 from ...schemas import UserTasksResponse
+from ..services.rag_handler import clear_user_cache
+from loguru import logger
 import os
 import shutil
 
@@ -23,7 +25,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         cleanup_existing_vectorstore(user_id)
         
         file_path = save_pdf_file(file, user_id)
-        print(f"PDF saved to: {file_path}")
+        logger.info(f"PDF saved to: {file_path}")
 
         # Queue the task with Celery
         task = process_pdf_task.delay(user_id, file_path, file.filename)
@@ -38,7 +40,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         }
 
     except Exception as e:
-        print(f"Error in upload_pdf: {str(e)}")
+        logger.error(f"Error in upload_pdf: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/task_status/{task_id}")
@@ -82,7 +84,7 @@ async def get_user_processing_status(token: str = Depends(oauth2_scheme)):
             total_completed=tasks_summary['total_completed']
         )
     except Exception as e:
-        print(f"Error getting user processing status: {str(e)}")
+        logger.error(f"Error getting user processing status: {str(e)}")
         raise HTTPException(status_code=500, detail="Unable to fetch task status")
 
 def cleanup_existing_vectorstore(user_id: int):
@@ -92,9 +94,12 @@ def cleanup_existing_vectorstore(user_id: int):
         user_vector_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
         if os.path.exists(user_vector_dir):
             shutil.rmtree(user_vector_dir)
-            print(f"Cleaned up existing vector store for user {user_id}")
+            logger.info(f"🗑️ Cleaned up existing vector store for user {user_id}")
     except Exception as e:
-        print(f"Warning: Could not clean up existing vector store: {e}")
+        logger.warning(f"⚠️ Could not clean up existing vector store: {e}")
+    
+    # Clear the in-memory cache for this user
+    clear_user_cache(user_id)
 
 @router.post("/cleanup_old_tasks")
 async def cleanup_old_tasks(token: str = Depends(oauth2_scheme)):
@@ -108,11 +113,36 @@ async def cleanup_old_tasks(token: str = Depends(oauth2_scheme)):
             "deleted_count": deleted_count
         }
     except Exception as e:
-        print(f"Error cleaning up old tasks: {str(e)}")
+        logger.error(f"Error cleaning up old tasks: {str(e)}")
         raise HTTPException(status_code=500, detail="Unable to cleanup old tasks")
+
+def cleanup_user_data(user_id: int):
+    # Clean up vector store
+    try:
+        from ..services.rag_service import DocumentProcessor
+        processor = DocumentProcessor()
+        user_vector_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
+        if os.path.exists(user_vector_dir):
+            shutil.rmtree(user_vector_dir)
+            logger.info(f"🗑️ Cleaned up vector store for user {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not clean up vector store: {e}")
+
+    # Clean up uploads
+    try:
+        from ..utils.file_utils import get_user_upload_dir
+        user_upload_dir = get_user_upload_dir(user_id)
+        if os.path.exists(user_upload_dir):
+            shutil.rmtree(user_upload_dir)
+            logger.info(f"🗑️ Cleaned up uploads for user {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not clean up uploads: {e}")
+    
+    # Clear the in-memory cache for this user
+    clear_user_cache(user_id)
 
 @router.post("/logout")
 async def logout(token: str = Depends(oauth2_scheme)):
     user_data = get_current_user(token)
-    cleanup_existing_vectorstore(user_data.id)
-    return {"message": "Logged out successfully"} 
+    cleanup_user_data(user_data.id)
+    return {"message": "Logged out successfully, all user data cleaned up"} 
