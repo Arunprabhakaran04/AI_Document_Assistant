@@ -7,3 +7,4 @@ backend/vector_stores
 debug_database.py
 test_connection_pool.py
 chatbot-fronted/node_modules/
+node_modules/
