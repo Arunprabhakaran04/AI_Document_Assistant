@@ -10,6 +10,7 @@ from ...schemas import TokenData
 from ..services.rag_handler import load_vectorstore_for_user, get_user_query_response, get_general_llm_response, clear_user_cache, get_cache_info
 from ..services.chat_db_service import ChatDBService
 from ..services.rag_service import DocumentProcessor
+from ..services.chat_cache import ChatCache
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -28,6 +29,23 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
     logger.debug(f"📝 Request data: {data}")
     
     try:
+        # Check cache first for identical queries
+        cached_response = ChatCache.get_cached_response(current_user.id, data.query, data.has_pdf)
+        if cached_response:
+            logger.info("💾 Returning cached response")
+            
+            # Still save to chat history if chat_id provided
+            if data.chat_id:
+                chat_info = ChatDBService.create_or_get_chat(current_user.id, data.chat_id, data.query)
+                ChatDBService.save_message(data.chat_id, "user", data.query)
+                ChatDBService.save_message(data.chat_id, "assistant", cached_response["response"], cached_response["source"])
+            
+            return {
+                "response": cached_response["response"], 
+                "source": cached_response["source"],
+                "cached": True
+            }
+        
         # Create or get chat record
         if data.chat_id:
             chat_info = ChatDBService.create_or_get_chat(current_user.id, data.chat_id, data.query)
@@ -57,12 +75,15 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
         if isinstance(response, dict):
             response = response.get("result") or next((v for v in response.values() if isinstance(v, str)), "[No response]")
         
+        # Cache the response for future identical queries
+        ChatCache.cache_response(current_user.id, data.query, data.has_pdf, response, source)
+        
         # Save assistant message
         if data.chat_id:
             ChatDBService.save_message(data.chat_id, "assistant", response, source)
         
         logger.success(f"✅ Chat response sent (source: {source})")
-        return {"response": response, "source": source}
+        return {"response": response, "source": source, "cached": False}
             
     except Exception as e:
         logger.error(f"❌ Error in chat: {str(e)}")
@@ -110,8 +131,14 @@ async def update_chat_title(chat_id: str, data: ChatTitleUpdate, current_user: T
 
 @router.post("/clear_cache")
 async def clear_cache(current_user: TokenData = Depends(get_current_user)):
+    # Clear vector store cache
     clear_user_cache(current_user.id)
-    return {"message": "Cache cleared"}
+    
+    # Clear chat response cache
+    ChatCache.clear_user_chat_cache(current_user.id)
+    
+    return {"message": "All caches cleared"}
+
 
 @router.get("/cache_status")
 async def get_cache_status(current_user: TokenData = Depends(get_current_user)):
@@ -119,8 +146,20 @@ async def get_cache_status(current_user: TokenData = Depends(get_current_user)):
     cache_info = get_cache_info()
     return {
         "user_id": current_user.id,
-        "user_has_cache": current_user.id in cache_info["cached_users"],
         "cache_info": cache_info
+    }
+
+@router.get("/user_cache_data")
+async def get_user_cache_data(current_user: TokenData = Depends(get_current_user)):
+    """Get all cache keys for the current user (for debugging and privacy verification)"""
+    from ...redis_cache import cache
+    
+    user_keys = cache.get_user_keys(current_user.id)
+    
+    return {
+        "user_id": current_user.id,
+        "total_keys": len(user_keys),
+        "key_samples": user_keys[:10] if len(user_keys) > 10 else user_keys
     }
 
 @router.post("/clear_pdf")

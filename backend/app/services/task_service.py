@@ -2,6 +2,7 @@ from ...database_connection import get_db_connection
 from typing import List, Dict, Optional
 from datetime import datetime, timezone, timedelta
 from ...celery_app import celery_app
+from ...redis_cache import cache
 
 
 class TaskService:
@@ -24,7 +25,15 @@ class TaskService:
     
     @staticmethod
     def get_user_active_tasks(user_id: int) -> List[Dict]:
-        """Get all active tasks for a user"""
+        """Get all active tasks for a user with caching"""
+        cache_key = f"active_tasks:user:{user_id}"
+        
+        # Try cache first (cache for 30 seconds to reduce DB load)
+        cached_tasks = cache.get_json(cache_key)
+        if cached_tasks:
+            return cached_tasks
+        
+        # Get from database
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
@@ -36,7 +45,12 @@ class TaskService:
             """, (user_id,))
             
             tasks = cursor.fetchall()
-            return [dict(task) for task in tasks]
+            task_list = [dict(task) for task in tasks]
+            
+            # Cache the result
+            cache.set_json(cache_key, task_list, expire=30)
+            
+            return task_list
     
     @staticmethod
     def get_user_completed_tasks(user_id: int, limit: int = 10) -> List[Dict]:
@@ -57,7 +71,7 @@ class TaskService:
     
     @staticmethod
     def update_task_status(task_id: str, status: str, progress_message: str = None) -> bool:
-        """Update task status and progress"""
+        """Update task status and progress, invalidate cache"""
         with get_db_connection() as conn:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
@@ -69,6 +83,16 @@ class TaskService:
             """, (status, now, progress_message, task_id))
             
             conn.commit()
+            
+            # Invalidate related caches
+            if cursor.rowcount > 0:
+                # Get user_id to clear user-specific cache
+                cursor.execute("SELECT user_id FROM user_tasks WHERE task_id = %s", (task_id,))
+                result = cursor.fetchone()
+                if result:
+                    user_id = result['user_id']  # Use dictionary key instead of index
+                    cache.delete(f"active_tasks:user:{user_id}")
+            
             return cursor.rowcount > 0
     
     @staticmethod

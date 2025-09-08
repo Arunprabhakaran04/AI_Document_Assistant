@@ -1,0 +1,5 @@
+start the backend server 
+open docker to start the docker engine
+run container - docker run -d -p 6379:6379 redis:alpine
+run celery - python start_celery
+
