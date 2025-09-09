@@ -5,44 +5,56 @@ from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from loguru import logger
 from ...redis_cache import cache
+from ...vector_store_db import get_user_vector_store_info
+from .dual_embedding_manager import DualEmbeddingManager
 
 _vector_store_cache = {}  # Keep in-memory cache as fallback
 
 def load_vectorstore_for_user(user_id: int):
+    """Load vector store with appropriate embedding model based on language"""
     try:
         # Check in-memory cache first (fastest)
-        if user_id in _vector_store_cache:
+        cache_key = f"vectorstore_user_{user_id}"
+        if cache_key in _vector_store_cache:
             logger.info(f"Using in-memory cached vector store for user {user_id}")
-            return _vector_store_cache[user_id]
+            return _vector_store_cache[cache_key]
         
         # Check Redis cache second (persistent across restarts)
         redis_key = f"vectorstore:user:{user_id}"
         cached_vectorstore = cache.get(redis_key)
         if cached_vectorstore:
             logger.info(f"Using Redis cached vector store for user {user_id}")
-            _vector_store_cache[user_id] = cached_vectorstore  # Also cache in memory
+            _vector_store_cache[cache_key] = cached_vectorstore  # Also cache in memory
             return cached_vectorstore
         
         # Load from disk if not in cache
-        from ..services.rag_service import DocumentProcessor
-        processor = DocumentProcessor()
-        vector_store_path = os.path.join(processor.vector_store_dir, f"user_{user_id}", "current_pdf")
+        from ...database_connection import get_db_connection
+        with get_db_connection() as conn:
+            store_info = get_user_vector_store_info(conn, user_id)
         
-        logger.info(f"Loading vector store from disk: {vector_store_path}")
+        if not store_info:
+            logger.warning(f"No vector store found for user {user_id}")
+            return None
+            
+        vector_store_path = store_info['path']
+        language = store_info['language']
+        embedding_model_name = store_info['embedding_model']
         
+        logger.info(f"Loading {language} vector store from disk: {vector_store_path}")
+        logger.info(f"Using embedding model: {embedding_model_name}")
+        
+        # Check if vector store files exist
         index_file = os.path.join(vector_store_path, "index.faiss")
         pkl_file = os.path.join(vector_store_path, "index.pkl")
         
         if not os.path.exists(index_file) or not os.path.exists(pkl_file):
             logger.warning(f"Vector store files not found for user {user_id}")
             return None
-            
-        embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-en-v1.5",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True}
-        )
+        
+        # Get appropriate embedding model for the language
+        embeddings = DualEmbeddingManager.get_embeddings_static(language)  # Use class method
 
+        # Load the vector store
         vectorstore = FAISS.load_local(
             vector_store_path, 
             embeddings, 
@@ -51,17 +63,18 @@ def load_vectorstore_for_user(user_id: int):
         )
         
         # Cache in both Redis and memory
-        _vector_store_cache[user_id] = vectorstore
+        _vector_store_cache[cache_key] = vectorstore
         cache.set(redis_key, vectorstore, expire=3600)  # Cache for 1 hour
         
-        logger.success(f"Loaded and cached vector store for user {user_id} with {vectorstore.index.ntotal} vectors")
+        logger.info(f"Loaded and cached {language} vector store for user {user_id} with {vectorstore.index.ntotal} vectors")
         return vectorstore
         
     except Exception as e:
         logger.error(f"Error loading vector store for user {user_id}: {e}")
         # Clear the cache entries if loading fails
-        if user_id in _vector_store_cache:
-            del _vector_store_cache[user_id]
+        cache_key = f"vectorstore_user_{user_id}"
+        if cache_key in _vector_store_cache:
+            del _vector_store_cache[cache_key]
         cache.delete(f"vectorstore:user:{user_id}")
         return None
 
@@ -69,8 +82,9 @@ def load_vectorstore_for_user(user_id: int):
 def clear_user_cache(user_id: int):
     """Clear the vector store cache for a specific user"""
     # Clear in-memory cache
-    if user_id in _vector_store_cache:
-        del _vector_store_cache[user_id]
+    cache_key = f"vectorstore_user_{user_id}"
+    if cache_key in _vector_store_cache:
+        del _vector_store_cache[cache_key]
         logger.info(f"Cleared in-memory cache for user {user_id}")
     
     # Clear Redis cache
@@ -94,9 +108,11 @@ def clear_all_cache():
 def get_cache_info():
     """Get information about current cache state"""
     redis_info = cache.get_cache_info()
+    in_memory_users = [key.replace("vectorstore_user_", "") for key in _vector_store_cache.keys()]
+    
     return {
         "in_memory": {
-            "cached_users": list(_vector_store_cache.keys()),
+            "cached_users": in_memory_users,
             "cache_size": len(_vector_store_cache)
         },
         "redis": redis_info

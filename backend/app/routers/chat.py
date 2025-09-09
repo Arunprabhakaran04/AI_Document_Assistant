@@ -25,14 +25,14 @@ class ChatTitleUpdate(BaseModel):
 
 @router.post("/chat")
 async def chat_with_rag(request: Request, data: ChatRequest, current_user: TokenData = Depends(get_current_user)):
-    logger.info(f"💬 Chat request from user {current_user.email}")
-    logger.debug(f"📝 Request data: {data}")
+    logger.info(f"Chat request from user {current_user.email}")
+    logger.debug(f"Request data: {data}")
     
     try:
         # Check cache first for identical queries
         cached_response = ChatCache.get_cached_response(current_user.id, data.query, data.has_pdf)
         if cached_response:
-            logger.info("💾 Returning cached response")
+            logger.info("Returning cached response")
             
             # Still save to chat history if chat_id provided
             if data.chat_id:
@@ -56,18 +56,18 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
         
         # Get AI response
         if not data.has_pdf:
-            logger.info("🤖 Using general LLM response")
+            logger.info("Using general LLM response")
             response = get_general_llm_response(data.query)
             source = "general"
         else:
-            logger.info("📄 Attempting to use PDF context")
+            logger.info("Attempting to use PDF context")
             vectorstore = load_vectorstore_for_user(current_user.id)
             if vectorstore is None:
-                logger.warning("⚠️ No vector store found, falling back to general LLM")
+                logger.warning("No vector store found, falling back to general LLM")
                 response = get_general_llm_response(data.query)
                 source = "general"
             else:
-                logger.success("📄 Using PDF context for response")
+                logger.success("Using PDF context for response")
                 response = get_user_query_response(vectorstore, data.query)
                 source = "rag"
         
@@ -82,11 +82,11 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
         if data.chat_id:
             ChatDBService.save_message(data.chat_id, "assistant", response, source)
         
-        logger.success(f"✅ Chat response sent (source: {source})")
+        logger.success(f"Chat response sent (source: {source})")
         return {"response": response, "source": source, "cached": False}
             
     except Exception as e:
-        logger.error(f"❌ Error in chat: {str(e)}")
+        logger.error(f"Error in chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 @router.get("/list_chats")
@@ -166,7 +166,7 @@ async def get_user_cache_data(current_user: TokenData = Depends(get_current_user
 async def clear_pdf(current_user: TokenData = Depends(get_current_user)):
     """Clear PDF data for the current user"""
     try:
-        logger.info(f"🗑️ Clearing PDF data for user {current_user.id}")
+        logger.info(f"Clearing PDF data for user {current_user.id}")
         
         # Clear the in-memory cache
         clear_user_cache(current_user.id)
@@ -177,10 +177,10 @@ async def clear_pdf(current_user: TokenData = Depends(get_current_user)):
         if os.path.exists(user_vector_dir):
             import shutil
             shutil.rmtree(user_vector_dir)
-            logger.info(f"🗑️ Cleaned up vector store for user {current_user.id}")
+            logger.info(f"Cleaned up vector store for user {current_user.id}")
         
-        logger.success(f"✅ PDF data cleared successfully for user {current_user.id}")
+        logger.success(f"PDF data cleared successfully for user {current_user.id}")
         return {"message": "PDF data cleared successfully"}
     except Exception as e:
-        logger.error(f"❌ Error clearing PDF data: {str(e)}")
+        logger.error(f"Error clearing PDF data: {str(e)}")
         raise HTTPException(status_code=500, detail="Error clearing PDF data")

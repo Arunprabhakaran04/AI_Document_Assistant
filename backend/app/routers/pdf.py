@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel
 from ...oauth2 import get_current_user
 from ..utils.file_utils import save_pdf_file
 from ..services.rag_service import DocumentProcessor
+from ..services.language_service import LanguageDetector
+from ..services.enhanced_pdf_extractor import EnhancedPDFExtractor
 from ...database_connection import get_db_connection
 from ...vector_store_db import save_vector_store_path
 from ..services.rag_handler import clear_user_cache
@@ -12,6 +15,15 @@ import shutil
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+# Test models
+class TextLanguageRequest(BaseModel):
+    text: str
+
+class LanguageDetectionResponse(BaseModel):
+    detected_language: str
+    text_stats: dict
+    is_valid_quality: bool
 
 @router.post("/upload_pdf", status_code=201)
 async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
@@ -25,7 +37,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         cleanup_existing_vectorstore(user_id)
         
         file_path = save_pdf_file(file, user_id)
-        logger.info(f"📁 PDF saved to: {file_path}")
+        logger.info(f"PDF saved to: {file_path}")
 
         processor = DocumentProcessor()
         vector_store = processor.embed_pdf(file_path, file.filename)
@@ -61,6 +73,94 @@ def cleanup_existing_vectorstore(user_id: int):
             logger.info(f"🗑️ Cleaned up existing vector store for user {user_id}")
     except Exception as e:
         logger.warning(f"⚠️ Could not clean up existing vector store: {e}")
+
+
+# Test endpoints for multilingual support
+@router.post("/test/detect_language", response_model=LanguageDetectionResponse)
+async def test_language_detection(request: TextLanguageRequest, token: str = Depends(oauth2_scheme)):
+    """Test endpoint to detect language of provided text"""
+    try:
+        get_current_user(token)  # Verify user is authenticated
+        
+        detector = LanguageDetector()
+        
+        # Detect language
+        language = detector.detect_language(request.text)
+        
+        # Get text statistics
+        stats = detector.get_text_stats(request.text)
+        
+        # Check text quality
+        is_valid = detector.validate_text_quality(request.text)
+        
+        logger.info(f"Language detection test: {language} (Quality: {is_valid})")
+        
+        return LanguageDetectionResponse(
+            detected_language=language,
+            text_stats=stats,
+            is_valid_quality=is_valid
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in language detection test: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/test/extract_pdf_text")
+async def test_pdf_text_extraction(file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
+    """Test endpoint to extract and analyze text from PDF"""
+    try:
+        get_current_user(token)  # Verify user is authenticated
+        
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+        
+        # Save temporary file
+        temp_path = f"/tmp/{file.filename}"
+        with open(temp_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        try:
+            # Extract text and detect language
+            extractor = EnhancedPDFExtractor()
+            detector = LanguageDetector()
+            
+            # Extract text
+            raw_text = extractor.extract_text(temp_path)
+            
+            # Detect language
+            language = detector.detect_language(raw_text)
+            
+            # Get statistics
+            stats = detector.get_text_stats(raw_text)
+            
+            # Validate quality
+            is_valid = detector.validate_text_quality(raw_text)
+            
+            # Get text preview
+            preview = extractor.get_text_preview(raw_text, 300)
+            
+            result = {
+                "filename": file.filename,
+                "detected_language": language,
+                "text_length": len(raw_text),
+                "text_stats": stats,
+                "is_valid_quality": is_valid,
+                "text_preview": preview
+            }
+            
+            logger.info(f"PDF text extraction test: {file.filename} -> {language}")
+            return result
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+    except Exception as e:
+        logger.error(f"Error in PDF text extraction test: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     
     # Clear the in-memory cache for this user
     clear_user_cache(user_id)
