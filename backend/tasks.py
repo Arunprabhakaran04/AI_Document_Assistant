@@ -36,21 +36,26 @@ def process_pdf_task(self, user_id: int, file_path: str, filename: str):
         TaskService.update_task_status(task_id, 'processing', 'Loading and extracting text from PDF...')
         
         # Enhanced PDF processing with language detection
-        raw_text, language = processor.process_pdf(file_path)
-        logger.info(f"PDF text extracted successfully - {len(raw_text)} characters, Language: {language}")
+        # Extract filename from file_path if not provided
+        if not filename:
+            filename = os.path.basename(file_path)
+        
+        page_texts, language = processor.process_pdf(file_path, filename)
+        total_chars = sum(len(page['text']) for page in page_texts)
+        logger.info(f"PDF text extracted successfully - {total_chars} characters from {len(page_texts)} pages, Language: {language}")
         
         # Update progress - Language-aware text splitting
         logger.info(f"Splitting {language} text into chunks...")
         self.update_state(state='PROCESSING', meta={'message': f'Splitting {language} text into chunks...'})
         TaskService.update_task_status(task_id, 'processing', f'Splitting {language} text into chunks...')
-        chunks = processor.split_text(raw_text, language)
-        logger.info(f"Text split into {len(chunks)} chunks for {language} processing")
+        chunks_with_metadata = processor.split_text_with_metadata(page_texts, language)
+        logger.info(f"Text split into {len(chunks_with_metadata)} chunks for {language} processing")
         
         # Update progress - Creating language-specific embeddings
         logger.info(f"Creating {language} embeddings...")
         self.update_state(state='PROCESSING', meta={'message': f'Creating {language} embeddings...'})
         TaskService.update_task_status(task_id, 'processing', f'Creating {language} embeddings...')
-        vector_store = processor.create_vector_store(chunks, language)
+        vector_store = processor.create_vector_store_with_metadata(chunks_with_metadata, language)
         logger.info(f"Vector store created with {vector_store.index.ntotal} vectors using {language} embeddings")
 
         vector_store_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
@@ -84,7 +89,7 @@ def process_pdf_task(self, user_id: int, file_path: str, filename: str):
         TaskService.update_task_status(task_id, 'completed', f'{language.title()} PDF processed successfully')
 
         logger.info(f"{language.title()} PDF processing completed successfully for user {user_id}")
-        logger.info(f"Final stats: {vector_store.index.ntotal} vectors, {len(chunks)} chunks, Language: {language}")
+        logger.info(f"Final stats: {vector_store.index.ntotal} vectors, {len(chunks_with_metadata)} chunks, Language: {language}")
         logger.info(f"Embedding model used: {embedding_model}")
 
         return {
@@ -93,7 +98,7 @@ def process_pdf_task(self, user_id: int, file_path: str, filename: str):
             'vector_count': vector_store.index.ntotal,
             'language': language,
             'embedding_model': embedding_model,
-            'chunks_count': len(chunks)
+            'chunks_count': len(chunks_with_metadata)
         }
         
     except Exception as e:

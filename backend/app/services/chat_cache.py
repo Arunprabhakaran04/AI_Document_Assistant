@@ -32,8 +32,8 @@ class ChatCache:
             return None
     
     @staticmethod
-    def cache_response(user_id: int, query: str, has_pdf: bool, response: str, source: str) -> bool:
-        """Cache a response for a query"""
+    def cache_response(user_id: int, query: str, has_pdf: bool, response: str, source: str, sources: list = None) -> bool:
+        """Cache a response for a query with optional source citations"""
         try:
             cache_key = ChatCache._generate_cache_key(user_id, query, has_pdf)
             
@@ -47,10 +47,14 @@ class ChatCache:
                 "has_pdf": has_pdf
             }
             
+            # Add sources if provided
+            if sources:
+                cached_data["sources"] = sources
+            
             success = cache.set_json(cache_key, cached_data, expire=expire_time)
             
             if success:
-                logger.info(f"💾 Cached response for user {user_id}")
+                logger.info(f"💾 Cached response for user {user_id} with {len(sources) if sources else 0} sources")
             
             return success
             

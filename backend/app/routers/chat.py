@@ -40,11 +40,18 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
                 ChatDBService.save_message(data.chat_id, "user", data.query)
                 ChatDBService.save_message(data.chat_id, "assistant", cached_response["response"], cached_response["source"])
             
-            return {
+            # Prepare cached response
+            response_data = {
                 "response": cached_response["response"], 
                 "source": cached_response["source"],
                 "cached": True
             }
+            
+            # Add sources if available in cached response
+            if "sources" in cached_response:
+                response_data["sources"] = cached_response["sources"]
+            
+            return response_data
         
         # Create or get chat record
         if data.chat_id:
@@ -68,22 +75,38 @@ async def chat_with_rag(request: Request, data: ChatRequest, current_user: Token
                 source = "general"
             else:
                 logger.success("Using PDF context for response")
-                response = get_user_query_response(vectorstore, data.query)
+                rag_response = get_user_query_response(vectorstore, data.query)
+                response = rag_response.get('result') if isinstance(rag_response, dict) else rag_response
+                sources = rag_response.get('sources', []) if isinstance(rag_response, dict) else []
                 source = "rag"
         
-        # Handle response format
+        # Handle response format for backward compatibility
         if isinstance(response, dict):
             response = response.get("result") or next((v for v in response.values() if isinstance(v, str)), "[No response]")
         
         # Cache the response for future identical queries
-        ChatCache.cache_response(current_user.id, data.query, data.has_pdf, response, source)
+        sources_for_cache = sources if 'sources' in locals() else []
+        ChatCache.cache_response(current_user.id, data.query, data.has_pdf, response, source, sources_for_cache)
         
         # Save assistant message
         if data.chat_id:
             ChatDBService.save_message(data.chat_id, "assistant", response, source)
         
         logger.success(f"Chat response sent (source: {source})")
-        return {"response": response, "source": source, "cached": False}
+        
+        # Prepare response with sources if available
+        response_data = {
+            "response": response, 
+            "source": source, 
+            "cached": False
+        }
+        
+        # Add sources if this is a RAG response
+        if source == "rag" and 'sources' in locals() and sources:
+            response_data["sources"] = sources
+            logger.info(f"Including {len(sources)} source citations in response")
+        
+        return response_data
             
     except Exception as e:
         logger.error(f"Error in chat: {str(e)}")

@@ -77,7 +77,8 @@ export const ChatArea = () => {
         role: 'assistant' as const,
         content: response.response,
         timestamp: new Date().toISOString(),
-        is_rag: response.source === 'rag'
+        is_rag: response.source === 'rag',
+        sources: response.sources || []
       };
 
       addMessage(aiMessage);

@@ -1,6 +1,13 @@
 import { motion } from 'framer-motion';
 import { User, Brain, FileText, Clock, AlertCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { SourceCitations } from './SourceCitations';
+
+interface Source {
+  document: string;
+  page: number | string;
+  chunk_index?: number;
+}
 
 interface Message {
   id: string;
@@ -8,6 +15,7 @@ interface Message {
   content: string;
   timestamp: string;
   is_rag?: boolean;
+  sources?: Source[];
 }
 
 interface MessageBubbleProps {
@@ -79,6 +87,11 @@ export const MessageBubble = ({ message }: MessageBubbleProps) => {
           <div className="whitespace-pre-wrap leading-relaxed">
             {message.content}
           </div>
+
+          {/* Source Citations for RAG responses */}
+          {!isUser && message.is_rag && message.sources && (
+            <SourceCitations sources={message.sources} />
+          )}
 
           {/* Timestamp */}
           <div className={`

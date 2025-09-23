@@ -65,68 +65,76 @@ class DocumentProcessor:
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
-    def process_pdf(self, pdf_path):
-        """Enhanced PDF processing with language detection"""
+    def process_pdf(self, pdf_path, filename):
+        """Enhanced PDF processing with language detection and metadata tracking"""
         try:
-            # Extract text using PyMuPDF for better Tamil support
-            raw_text = self.pdf_extractor.extract_text(pdf_path)
+            # Extract text page by page with metadata
+            page_texts = self.pdf_extractor.extract_text_with_page_info(pdf_path, filename)
+            
+            if not page_texts:
+                raise ValueError("No text content found in PDF")
+            
+            # Combine all text for language detection
+            combined_text = ' '.join([page['text'] for page in page_texts])
             
             # Validate text quality
-            if not self.language_detector.validate_text_quality(raw_text):
+            if not self.language_detector.validate_text_quality(combined_text):
                 raise ValueError("Extracted text quality is insufficient for processing")
             
             # Detect language
-            language = self.language_detector.detect_language(raw_text)
+            language = self.language_detector.detect_language(combined_text)
             logger.info(f"📝 Detected language: {language}")
             
             # Get text statistics for debugging
-            stats = self.language_detector.get_text_stats(raw_text)
+            stats = self.language_detector.get_text_stats(combined_text)
             logger.info(f"📊 Text stats: {stats['total_chars']} chars, "
                        f"Tamil: {stats['tamil_ratio']:.1%}, English: {stats['english_ratio']:.1%}")
             
-            # Apply language-specific normalization
+            # Apply language-specific normalization to each page
             if language == 'tamil':
-                raw_text = self.pdf_extractor.normalize_tamil_text(raw_text)
-                logger.info("🔧 Applied Tamil text normalization")
+                for page_info in page_texts:
+                    page_info['text'] = self.pdf_extractor.normalize_tamil_text(page_info['text'])
+                logger.info("🔧 Applied Tamil text normalization to all pages")
             
-            return raw_text, language
+            return page_texts, language
             
         except Exception as e:
             logger.error(f"❌ Error processing PDF {pdf_path}: {e}")
             raise e
 
-    def split_text(self, text, language='english'):
-        """Language-aware text splitting"""
+    def split_text_with_metadata(self, page_texts, language='english'):
+        """Language-aware text splitting with metadata preservation"""
         try:
-            chunks = self.text_splitter.split_text(text, language)
+            chunks_with_metadata = self.text_splitter.split_text_with_metadata(page_texts, language)
             
             # Validate chunks
-            validation = self.text_splitter.validate_chunks(chunks, language)
+            chunk_texts = [chunk['text'] for chunk in chunks_with_metadata]
+            validation = self.text_splitter.validate_chunks(chunk_texts, language)
             if not validation['valid']:
                 raise ValueError(f"Text splitting validation failed: {validation.get('reason', 'Unknown error')}")
             
             if 'warning' in validation:
                 logger.warning(f"⚠️ Text splitting warning: {validation['warning']}")
             
-            return chunks
+            return chunks_with_metadata
             
         except Exception as e:
-            logger.error(f"❌ Error splitting {language} text: {e}")
+            logger.error(f"❌ Error splitting {language} text with metadata: {e}")
             raise e
 
     def embed_pdf(self, pdf_path, filename):
-        """Process PDF with language detection and appropriate embeddings"""
+        """Process PDF with language detection, metadata tracking, and appropriate embeddings"""
         try:
-            # Enhanced PDF processing with language detection
-            raw_text, language = self.process_pdf(pdf_path)
+            # Enhanced PDF processing with language detection and metadata
+            page_texts, language = self.process_pdf(pdf_path, filename)
             logger.info(f"📄 Processing {language} PDF: {filename}")
             
-            # Language-aware text splitting
-            chunks = self.split_text(raw_text, language)
-            logger.info(f"✂️ Split into {len(chunks)} chunks for {language} processing")
+            # Language-aware text splitting with metadata preservation
+            chunks_with_metadata = self.split_text_with_metadata(page_texts, language)
+            logger.info(f"✂️ Split into {len(chunks_with_metadata)} chunks for {language} processing")
             
-            # Create vector store with appropriate embeddings
-            vector_store = self.create_vector_store(chunks, language)
+            # Create vector store with metadata
+            vector_store = self.create_vector_store_with_metadata(chunks_with_metadata, language)
             
             return vector_store, language
             
@@ -134,20 +142,24 @@ class DocumentProcessor:
             logger.error(f"❌ Error embedding PDF {filename}: {e}")
             raise e
 
-    def create_vector_store(self, chunks, language='english'):
-        """Create vector store with appropriate embeddings for the language"""
+    def create_vector_store_with_metadata(self, chunks_with_metadata, language='english'):
+        """Create vector store with appropriate embeddings and metadata for the language"""
         try:
             # Get appropriate embeddings model for the language
-            embeddings = DualEmbeddingManager.get_embeddings_static(language)  # Use class method
+            embeddings = DualEmbeddingManager.get_embeddings_static(language)
             
-            # Create vector store
-            vector_store = FAISS.from_texts(chunks, embeddings)
+            # Extract texts and metadatas for FAISS
+            texts = [chunk['text'] for chunk in chunks_with_metadata]
+            metadatas = [chunk['metadata'] for chunk in chunks_with_metadata]
             
-            logger.info(f"✅ Created {language} vector store with {vector_store.index.ntotal} vectors")
+            # Create vector store with metadata
+            vector_store = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
+            
+            logger.info(f"✅ Created {language} vector store with {vector_store.index.ntotal} vectors and metadata")
             return vector_store
             
         except Exception as e:
-            logger.error(f"❌ Error creating {language} vector store: {e}")
+            logger.error(f"❌ Error creating {language} vector store with metadata: {e}")
             raise e
 
     # Legacy method for backward compatibility

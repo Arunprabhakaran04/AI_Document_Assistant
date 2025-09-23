@@ -125,9 +125,33 @@ def get_user_query_response(vectorstore, query):
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm, 
             retriever=vectorstore.as_retriever(search_kwargs={"k": 4}),
-            return_source_documents=False
+            return_source_documents=True  # Enable source documents return
         )
-        return qa_chain.invoke(query)
+        result = qa_chain.invoke(query)
+        
+        # Extract sources from the result
+        sources = []
+        if 'source_documents' in result and result['source_documents']:
+            seen_sources = set()  # To avoid duplicate sources
+            for doc in result['source_documents']:
+                if hasattr(doc, 'metadata') and doc.metadata:
+                    source_info = {
+                        'document': doc.metadata.get('source', 'Unknown Document'),
+                        'page': doc.metadata.get('page', 'Unknown Page'),
+                        'chunk_index': doc.metadata.get('chunk_index', 1)
+                    }
+                    # Create a unique identifier for the source
+                    source_key = f"{source_info['document']}-{source_info['page']}"
+                    if source_key not in seen_sources:
+                        sources.append(source_info)
+                        seen_sources.add(source_key)
+        
+        # Return both the answer and sources
+        return {
+            'result': result.get('result', 'No answer found'),
+            'sources': sources
+        }
+        
     except Exception as e:
         logger.error(f"Error in RAG query: {e}")
         raise e

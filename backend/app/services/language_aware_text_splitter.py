@@ -86,6 +86,65 @@ class LanguageAwareTextSplitter:
             previews.append(f"Chunk {i+1}: {preview}")
         return previews
     
+    def split_text_with_metadata(self, page_texts: List[dict], language: Literal['english', 'tamil']) -> List[dict]:
+        """
+        Split text from pages into chunks while preserving metadata
+        page_texts: List of dicts with 'text' and 'metadata' keys
+        Returns: List of dicts with 'text' and 'metadata' keys for each chunk
+        """
+        if language == 'tamil':
+            separators = self.tamil_separators
+            logger.info("Using Tamil text splitting patterns with metadata")
+        else:
+            separators = self.english_separators
+            logger.info("Using English text splitting patterns with metadata")
+        
+        try:
+            splitter = RecursiveCharacterTextSplitter(
+                separators=separators,
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+                keep_separator=False
+            )
+            
+            all_chunks_with_metadata = []
+            
+            for page_info in page_texts:
+                page_text = page_info['text']
+                page_metadata = page_info['metadata']
+                
+                # Split the page text into chunks
+                page_chunks = splitter.split_text(page_text)
+                
+                # Add metadata to each chunk from this page
+                for chunk_idx, chunk in enumerate(page_chunks):
+                    chunk_metadata = page_metadata.copy()
+                    chunk_metadata['chunk_index'] = chunk_idx + 1
+                    chunk_metadata['chunks_on_page'] = len(page_chunks)
+                    
+                    all_chunks_with_metadata.append({
+                        'text': chunk,
+                        'metadata': chunk_metadata
+                    })
+            
+            logger.info(f"Split {language} text from {len(page_texts)} pages into {len(all_chunks_with_metadata)} chunks with metadata")
+            
+            # Log chunk statistics
+            if all_chunks_with_metadata:
+                chunk_sizes = [len(chunk['text']) for chunk in all_chunks_with_metadata]
+                avg_size = sum(chunk_sizes) / len(chunk_sizes)
+                min_size = min(chunk_sizes)
+                max_size = max(chunk_sizes)
+                
+                logger.info(f"Chunk statistics - Avg: {avg_size:.0f}, Min: {min_size}, Max: {max_size}")
+            
+            return all_chunks_with_metadata
+            
+        except Exception as e:
+            logger.error(f"Error splitting {language} text with metadata: {e}")
+            raise e
+
     def validate_chunks(self, chunks: List[str], language: str) -> dict:
         """
         Validate chunk quality and provide statistics

@@ -19,6 +19,11 @@ interface Message {
   content: string;
   timestamp: string;
   is_rag?: boolean;
+  sources?: Array<{
+    document: string;
+    page: number | string;
+    chunk_index?: number;
+  }>;
 }
 
 interface PDFStatus {

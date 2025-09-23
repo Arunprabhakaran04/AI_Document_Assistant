@@ -40,8 +40,8 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         logger.info(f"PDF saved to: {file_path}")
 
         processor = DocumentProcessor()
-        vector_store = processor.embed_pdf(file_path, file.filename)
-        logger.success(f"🔢 Vector store created with {vector_store.index.ntotal} vectors")
+        vector_store, language = processor.embed_pdf(file_path, file.filename)
+        logger.success(f"🔢 Vector store created with {vector_store.index.ntotal} vectors for {language} document")
 
         vector_store_dir = os.path.join(processor.vector_store_dir, f"user_{user_id}")
         os.makedirs(vector_store_dir, exist_ok=True)
@@ -55,7 +55,7 @@ async def upload_pdf(file: UploadFile = File(...), token: str = Depends(oauth2_s
         logger.success(f"💾 Vector store saved to: {vector_store_path}")
 
         with get_db_connection() as conn:
-            save_vector_store_path(conn, user_id, vector_store_path)
+            save_vector_store_path(conn, user_id, vector_store_path, language)
 
         return {"message": "PDF uploaded and embedded successfully."}
 

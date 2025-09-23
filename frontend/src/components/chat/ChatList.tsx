@@ -45,7 +45,8 @@ export const ChatList = () => {
         role: msg.role,
         content: msg.content,
         timestamp: new Date().toISOString(),
-        is_rag: msg.source === 'rag'
+        is_rag: msg.source === 'rag',
+        sources: msg.sources || []
       }));
       setMessages(formattedMessages);
     } catch (error) {
