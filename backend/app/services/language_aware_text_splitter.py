@@ -144,8 +144,8 @@ class LanguageAwareTextSplitter:
         except Exception as e:
             logger.error(f"Error splitting {language} text with metadata: {e}")
             raise e
-
-    def validate_chunks(self, chunks: List[str], language: str) -> dict:
+    
+    def validate_chunks(self, chunks: List[str], language: Literal['english', 'tamil']) -> dict:
         """
         Validate chunk quality and provide statistics
         """
